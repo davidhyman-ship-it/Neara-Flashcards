@@ -1,0 +1,289 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Neara Flashcards — Google Sheet Powered</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; background:#0b0b0f; color:#eaeaea; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial; }
+  .container { min-height:100%; display:flex; flex-direction:column; gap:16px; align-items:center; padding:20px; }
+  .header { width:min(1100px, 92vw); display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .title { font-weight:700; letter-spacing:.2px; font-size:20px; opacity:.95 }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; }
+  button { background:#1d1d25; color:#eaeaea; border:1px solid #2a2a35; padding:10px 14px; border-radius:12px; cursor:pointer; }
+  button:hover { background:#262635; }
+  .pill { font-size:12px; padding:6px 10px; border-radius:999px; background:#14141b; border:1px solid #2a2a35; cursor:pointer; }
+  .pill.active { background:white; color:#0b0b0f; border-color:transparent; }
+  .deck-info { font-size:12px; opacity:.7 }
+  .stage { flex:1; display:flex; align-items:center; justify-content:center; width:100%; }
+  .card-outer { perspective: 1200px; }
+  .card { width:min(880px, 92vw); height:min(520px, 60vh); border-radius:20px; position:relative; transform-style:preserve-3d; transition:transform .5s ease-in-out; cursor:pointer; box-shadow:0 20px 60px rgba(0,0,0,.5); }
+  .face { position:absolute; inset:0; background:#fff; color:#000; border-radius:20px; display:flex; align-items:center; justify-content:center; text-align:center; padding:28px; backface-visibility:hidden; }
+  .face h2 { font-size: clamp(18px, 3vw, 28px); line-height:1.25; font-weight:650; }
+  .face p { font-size: clamp(14px, 2.1vw, 20px); line-height:1.42; }
+  .back { transform:rotateY(180deg); font-weight:600; }
+  .foot { width:min(1100px, 92vw); display:flex; flex-direction:column; gap:10px; }
+  .categories { display:flex; gap:8px; flex-wrap:wrap; }
+  .progress { font-size:12px; opacity:.7 }
+  .badge { font-size:11px; padding:4px 8px; border:1px solid #2a2a35; border-radius:999px; opacity:.8; }
+  .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .kbd { padding:1px 6px; border:1px solid #2a2a35; border-radius:6px; font-size:12px; background:#12121a; }
+  .muted { color:#b7b7c9; opacity:.8 }
+  .settings { width:min(1100px, 92vw); border:1px dashed #303040; border-radius:12px; padding:12px; background:#12121a; }
+  input[type="text"] { width:100%; padding:10px; border-radius:10px; border:1px solid #2a2a35; background:#0f0f15; color:#eaeaea; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="title">Neara Flashcards — Google Sheet Powered</div>
+    <div class="controls">
+      <button id="btnPrev">◀ Prev</button>
+      <button id="btnFlip">Flip (Space)</button>
+      <button id="btnNext">Next ▶</button>
+      <button id="btnRandom">Random</button>
+      <button id="btnQuiz">Quiz Mode</button>
+      <button id="btnExport">Export JSON</button>
+      <button id="btnSettings">Sheet Settings</button>
+    </div>
+  </div>
+  <div class="deck-info" id="deckInfo"></div>
+
+  <div class="settings" id="settings" style="display:none;">
+    <div class="muted" style="margin-bottom:6px;">Paste your Google Sheet GViz URL here (format: https://docs.google.com/spreadsheets/d/ID/gviz/tq?tqx=out:json&sheet=Sheet1)</div>
+    <input type="text" id="sheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/.../gviz/tq?tqx=out:json&sheet=Sheet1"/>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button id="btnSaveUrl">Save URL</button>
+      <button id="btnHideSettings">Close</button>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="card-outer">
+      <div class="card" id="card">
+        <div class="face front" id="front"><div><div class="badge" id="catBadge"></div><h2 id="question"></h2></div></div>
+        <div class="face back" id="back"><div><div class="badge" id="catBadgeBack"></div><p id="answer"></p></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="toolbar">
+      <span class="muted">Filter by category:</span>
+      <div class="categories" id="categories"></div>
+    </div>
+    <div class="progress" id="progress"></div>
+    <div class="muted">Tip: click the card or press <span class="kbd">Space</span> to flip. Use <span class="kbd">←</span>/<span class="kbd">→</span> for prev/next, <span class="kbd">R</span> for random.</div>
+  </div>
+</div>
+
+<script>
+const DEFAULT_CARDS = [
+  {category:"Getting Started", q:"Paste your Google Sheet URL in Settings to load live cards.", a:"Open the Settings panel above, paste the GViz URL, click Save, and the deck will refresh automatically."},
+  {category:"Getting Started", q:"How to build the GViz URL?", a:"Take your Sheet share link and replace trailing part with /gviz/tq?tqx=out:json&sheet=Sheet1 . Ensure the sheet is shared as 'Anyone with the link: Viewer'."},
+  {category:"Getting Started", q:"Columns required in the Sheet?", a:"category | question | answer in row 1. Each subsequent row is a flashcard."}
+];
+
+let allCards = DEFAULT_CARDS.slice();
+let filtered = [...allCards];
+let idx = 0;
+let flipped = false;
+let currentCategory = "All";
+let quizActive=false, quizIdx=0, quizQns=[], score=0;
+
+const cardEl = document.getElementById('card');
+const qEl = document.getElementById('question');
+const aEl = document.getElementById('answer');
+const catEl = document.getElementById('catBadge');
+const catBackEl = document.getElementById('catBadgeBack');
+const progressEl = document.getElementById('progress');
+const deckInfoEl = document.getElementById('deckInfo');
+const catsEl = document.getElementById('categories');
+const settingsEl = document.getElementById('settings');
+const sheetUrlInput = document.getElementById('sheetUrlInput');
+
+function uniqueCategories(cards){ return Array.from(new Set(cards.map(c=>c.category))).sort(); }
+
+function renderCategories(){
+  catsEl.innerHTML = '';
+  const cats = ['All', ...uniqueCategories(allCards)];
+  cats.forEach(c => {
+    const btn = document.createElement('button');
+    btn.className = 'pill' + (c===currentCategory ? ' active' : '');
+    btn.textContent = c;
+    btn.onclick = () => { currentCategory = c; applyFilter(); };
+    catsEl.appendChild(btn);
+  });
+}
+
+function applyFilter(){
+  filtered = currentCategory==='All' ? [...allCards] : allCards.filter(c => c.category===currentCategory);
+  idx = 0;
+  flipped = false;
+  update();
+  renderCategories();
+}
+
+function update(){
+  if(filtered.length===0){
+    qEl.textContent = "No cards in this category.";
+    aEl.textContent = "Try switching categories.";
+    catEl.textContent = currentCategory;
+    catBackEl.textContent = currentCategory;
+    cardEl.style.transform = 'rotateY(0deg)';
+    progressEl.textContent = '';
+    deckInfoEl.textContent = '';
+    return;
+  }
+  const c = filtered[idx];
+  qEl.textContent = c.q;
+  aEl.textContent = c.a;
+  catEl.textContent = c.category;
+  catBackEl.textContent = c.category;
+  cardEl.style.transform = flipped ? 'rotateY(180deg)' : 'rotateY(0deg)';
+  progressEl.textContent = `Card ${idx+1} / ${filtered.length} (${currentCategory})`;
+  deckInfoEl.textContent = `${allCards.length} total cards • ${uniqueCategories(allCards).length} categories`;
+}
+
+function prev(){ idx = (idx-1+filtered.length)%filtered.length; flipped=false; update(); }
+function next(){ idx = (idx+1)%filtered.length; flipped=false; update(); }
+function flip(){ flipped=!flipped; update(); }
+function random(){ if(filtered.length<=1) return; let r=Math.floor(Math.random()*filtered.length); if(r===idx) r=(r+1)%filtered.length; idx=r; flipped=false; update(); }
+
+// Quiz mode
+function startQuiz(){
+  if(filtered.length<4){ alert('Need at least 4 cards in the current set for a quiz.'); return; }
+  quizActive=true; quizIdx=0; score=0;
+  const pool=[...filtered];
+  for(let i=pool.length-1;i>0;i--){const j=Math.floor(Math.random()* (i+1)); [pool[i],pool[j]]=[pool[j],pool[i]];}
+  quizQns = pool.slice(0, Math.min(10, pool.length)).map(card => {
+    const answers = [card.a];
+    const others = allCards.filter(c=>c!==card).map(c=>c.a);
+    for(let i=others.length-1;i>0;i--){const j=Math.floor(Math.random()* (i+1)); [others[i],others[j]]=[others[j],others[i]];}
+    answers.push(...others.slice(0,3));
+    for(let i=answers.length-1;i>0;i--){const j=Math.floor(Math.random()* (i+1)); [answers[i],answers[j]]=[answers[j],answers[i]];}
+    return {q: card.q, a: card.a, category: card.category, options: answers};
+  });
+  renderQuizQuestion();
+}
+
+function renderQuizQuestion(){
+  const item = quizQns[quizIdx];
+  flipped=false;
+  cardEl.style.transform = 'rotateY(0deg)';
+  qEl.innerHTML = item.q + "<br><br><span style='font-size:13px;opacity:.7'>(Choose one below)</span>";
+  aEl.textContent = "";
+  catEl.textContent = "Quiz • " + item.category;
+  catBackEl.textContent = "Quiz • " + item.category;
+  renderOptions(item);
+  progressEl.textContent = `Quiz question ${quizIdx+1} / ${quizQns.length} • Score: ${score}`;
+}
+
+let optionsBar=null;
+function renderOptions(item){
+  removeOptions();
+  optionsBar = document.createElement('div');
+  optionsBar.style.marginTop = '14px';
+  optionsBar.style.display = 'flex';
+  optionsBar.style.gap = '8px';
+  optionsBar.style.flexWrap = 'wrap';
+  document.querySelector('.foot').prepend(optionsBar);
+  item.options.forEach(opt => { 
+    const b=document.createElement('button');
+    b.textContent = opt.length>160 ? opt.slice(0,157)+'…' : opt;
+    b.onclick = ()=>{ 
+      if(opt===item.a) { score++; }
+      quizIdx++;
+      if(quizIdx>=quizQns.length) { endQuiz(); } else { renderQuizQuestion(); }
+    };
+    optionsBar.appendChild(b);
+  });
+}
+
+function removeOptions(){ if(optionsBar && optionsBar.parentNode){ optionsBar.parentNode.removeChild(optionsBar); } optionsBar=null; }
+
+function endQuiz(){
+  quizActive=false;
+  removeOptions();
+  qEl.textContent = `Quiz complete! Score: ${score} / ${quizQns.length}`;
+  aEl.textContent = "Click Next or Random to keep studying, or start another quiz.";
+  catEl.textContent = "Quiz";
+  catBackEl.textContent = "Quiz";
+  progressEl.textContent = `Quiz complete • Score: ${score} / ${quizQns.length}`;
+}
+
+// Settings UI
+document.getElementById('btnSettings').onclick = ()=>{ settingsEl.style.display = 'block'; sheetUrlInput.value = localStorage.getItem('sheetUrl') || ''; };
+document.getElementById('btnHideSettings').onclick = ()=>{ settingsEl.style.display = 'none'; };
+document.getElementById('btnSaveUrl').onclick = ()=>{ 
+  const url = sheetUrlInput.value.trim();
+  if(!url){ alert('Please paste a GViz URL.'); return; }
+  localStorage.setItem('sheetUrl', url);
+  settingsEl.style.display = 'none';
+  loadFromSheet();
+};
+
+// Loaders
+async function loadFromSheet(){
+  const url = localStorage.getItem('sheetUrl');
+  if(!url){ update(); renderCategories(); return; }
+  deckInfoEl.textContent = "Loading cards from Google Sheet…";
+  try{
+    const res = await fetch(url);
+    const text = await res.text();
+    // GViz JSON comes as: google.visualization.Query.setResponse({...});
+    const jsonText = text.replace(/^.*setResponse\(/,'').replace(/\);\s*$/,'');
+    const data = JSON.parse(jsonText);
+    const rows = (data.table && data.table.rows) ? data.table.rows : [];
+    const cards = [];
+    // Find column indices by label (case-insensitive)
+    const cols = (data.table && data.table.cols) ? data.table.cols.map(c => (c.label||'').toLowerCase()) : [];
+    const ci = cols.indexOf('category');
+    const qi = cols.indexOf('question');
+    const ai = cols.indexOf('answer');
+    rows.forEach(r => {
+      const get = (i)=> (r.c[i] && r.c[i].v) ? String(r.c[i].v) : '';
+      const cat = get(ci).trim();
+      const q = get(qi).trim();
+      const a = get(ai).trim();
+      if(cat && q && a){ cards.push({category:cat, q:q, a:a}); }
+    });
+    if(cards.length){
+      allCards = cards;
+      currentCategory = "All";
+      applyFilter();
+    } else {
+      deckInfoEl.textContent = "No valid rows found. Ensure headers are 'category | question | answer'.";
+    }
+  }catch(e){
+    deckInfoEl.textContent = "Failed to load sheet: " + e;
+  }
+}
+
+// Wire events
+document.getElementById('btnPrev').onclick = ()=> quizActive ? null : prev();
+document.getElementById('btnNext').onclick = ()=> quizActive ? null : next();
+document.getElementById('btnFlip').onclick = ()=> quizActive ? null : flip();
+document.getElementById('btnRandom').onclick = ()=> quizActive ? null : random();
+document.getElementById('btnQuiz').onclick = ()=> startQuiz();
+document.getElementById('btnExport').onclick = ()=>{ 
+  const blob = new Blob([JSON.stringify(allCards, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download='neara_flashcards.json'; a.click(); URL.revokeObjectURL(url);
+};
+
+cardEl.addEventListener('click', ()=>{ if(!quizActive) flip(); });
+window.addEventListener('keydown', (e)=>{ 
+  if(e.key===' '){ e.preventDefault(); if(!quizActive) flip(); }
+  else if(e.key==='ArrowRight'){ if(!quizActive) next(); }
+  else if(e.key==='ArrowLeft'){ if(!quizActive) prev(); }
+  else if(e.key.toLowerCase()==='r'){ if(!quizActive) random(); }
+});
+
+// Init
+applyFilter();
+loadFromSheet();
+</script>
+</body>
+</html>
