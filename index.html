@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Neara Flashcards — Google Sheet Powered</title>
+<title>Neara Flashcards — Live from Google Sheets</title>
 <style>
   html, body { margin:0; padding:0; height:100%; background:#0b0b0f; color:#eaeaea; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial; }
   .container { min-height:100%; display:flex; flex-direction:column; gap:16px; align-items:center; padding:20px; }
@@ -30,14 +30,12 @@
   .toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .kbd { padding:1px 6px; border:1px solid #2a2a35; border-radius:6px; font-size:12px; background:#12121a; }
   .muted { color:#b7b7c9; opacity:.8 }
-  .settings { width:min(1100px, 92vw); border:1px dashed #303040; border-radius:12px; padding:12px; background:#12121a; }
-  input[type="text"] { width:100%; padding:10px; border-radius:10px; border:1px solid #2a2a35; background:#0f0f15; color:#eaeaea; }
 </style>
 </head>
 <body>
 <div class="container">
   <div class="header">
-    <div class="title">Neara Flashcards — Google Sheet Powered</div>
+    <div class="title">Neara Flashcards — Live from Google Sheets</div>
     <div class="controls">
       <button id="btnPrev">◀ Prev</button>
       <button id="btnFlip">Flip (Space)</button>
@@ -45,19 +43,9 @@
       <button id="btnRandom">Random</button>
       <button id="btnQuiz">Quiz Mode</button>
       <button id="btnExport">Export JSON</button>
-      <button id="btnSettings">Sheet Settings</button>
     </div>
   </div>
-  <div class="deck-info" id="deckInfo"></div>
-
-  <div class="settings" id="settings" style="display:none;">
-    <div class="muted" style="margin-bottom:6px;">Paste your Google Sheet GViz URL here (format: https://docs.google.com/spreadsheets/d/ID/gviz/tq?tqx=out:json&sheet=Sheet1)</div>
-    <input type="text" id="sheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/.../gviz/tq?tqx=out:json&sheet=Sheet1"/>
-    <div style="display:flex; gap:8px; margin-top:8px;">
-      <button id="btnSaveUrl">Save URL</button>
-      <button id="btnHideSettings">Close</button>
-    </div>
-  </div>
+  <div class="deck-info" id="deckInfo">Loading cards…</div>
 
   <div class="stage">
     <div class="card-outer">
@@ -79,14 +67,10 @@
 </div>
 
 <script>
-const DEFAULT_CARDS = [
-  {category:"Getting Started", q:"Paste your Google Sheet URL in Settings to load live cards.", a:"Open the Settings panel above, paste the GViz URL, click Save, and the deck will refresh automatically."},
-  {category:"Getting Started", q:"How to build the GViz URL?", a:"Take your Sheet share link and replace trailing part with /gviz/tq?tqx=out:json&sheet=Sheet1 . Ensure the sheet is shared as 'Anyone with the link: Viewer'."},
-  {category:"Getting Started", q:"Columns required in the Sheet?", a:"category | question | answer in row 1. Each subsequent row is a flashcard."}
-];
+const SHEET_URL = "https://docs.google.com/spreadsheets/d/1JObO5eJ27zXHHPVaC3wp-6B2qa0XDsojMn_W3Cx1ls0/gviz/tq?tqx=out:json&gid=519835157"; // baked-in GViz URL
 
-let allCards = DEFAULT_CARDS.slice();
-let filtered = [...allCards];
+let allCards = [];
+let filtered = [];
 let idx = 0;
 let flipped = false;
 let currentCategory = "All";
@@ -100,8 +84,6 @@ const catBackEl = document.getElementById('catBadgeBack');
 const progressEl = document.getElementById('progress');
 const deckInfoEl = document.getElementById('deckInfo');
 const catsEl = document.getElementById('categories');
-const settingsEl = document.getElementById('settings');
-const sheetUrlInput = document.getElementById('sheetUrlInput');
 
 function uniqueCategories(cards){ return Array.from(new Set(cards.map(c=>c.category))).sort(); }
 
@@ -119,21 +101,17 @@ function renderCategories(){
 
 function applyFilter(){
   filtered = currentCategory==='All' ? [...allCards] : allCards.filter(c => c.category===currentCategory);
-  idx = 0;
-  flipped = false;
-  update();
-  renderCategories();
+  idx = 0; flipped = false; update(); renderCategories();
 }
 
 function update(){
   if(filtered.length===0){
-    qEl.textContent = "No cards in this category.";
-    aEl.textContent = "Try switching categories.";
+    qEl.textContent = "No cards loaded.";
+    aEl.textContent = "Check sheet permissions or headers (category | question | answer).";
     catEl.textContent = currentCategory;
     catBackEl.textContent = currentCategory;
     cardEl.style.transform = 'rotateY(0deg)';
     progressEl.textContent = '';
-    deckInfoEl.textContent = '';
     return;
   }
   const c = filtered[idx];
@@ -213,66 +191,19 @@ function endQuiz(){
   progressEl.textContent = `Quiz complete • Score: ${score} / ${quizQns.length}`;
 }
 
-// Settings UI
-document.getElementById('btnSettings').onclick = ()=>{ settingsEl.style.display = 'block'; sheetUrlInput.value = localStorage.getItem('sheetUrl') || ''; };
-document.getElementById('btnHideSettings').onclick = ()=>{ settingsEl.style.display = 'none'; };
-document.getElementById('btnSaveUrl').onclick = ()=>{ 
-  const url = sheetUrlInput.value.trim();
-  if(!url){ alert('Please paste a GViz URL.'); return; }
-  localStorage.setItem('sheetUrl', url);
-  settingsEl.style.display = 'none';
-  loadFromSheet();
-};
-
-// Loaders
-async function loadFromSheet(){
-  const url = localStorage.getItem('sheetUrl');
-  if(!url){ update(); renderCategories(); return; }
-  deckInfoEl.textContent = "Loading cards from Google Sheet…";
-  try{
-    const res = await fetch(url);
-    const text = await res.text();
-    // GViz JSON comes as: google.visualization.Query.setResponse({...});
-    const jsonText = text.replace(/^.*setResponse\(/,'').replace(/\);\s*$/,'');
-    const data = JSON.parse(jsonText);
-    const rows = (data.table && data.table.rows) ? data.table.rows : [];
-    const cards = [];
-    // Find column indices by label (case-insensitive)
-    const cols = (data.table && data.table.cols) ? data.table.cols.map(c => (c.label||'').toLowerCase()) : [];
-    const ci = cols.indexOf('category');
-    const qi = cols.indexOf('question');
-    const ai = cols.indexOf('answer');
-    rows.forEach(r => {
-      const get = (i)=> (r.c[i] && r.c[i].v) ? String(r.c[i].v) : '';
-      const cat = get(ci).trim();
-      const q = get(qi).trim();
-      const a = get(ai).trim();
-      if(cat && q && a){ cards.push({category:cat, q:q, a:a}); }
-    });
-    if(cards.length){
-      allCards = cards;
-      currentCategory = "All";
-      applyFilter();
-    } else {
-      deckInfoEl.textContent = "No valid rows found. Ensure headers are 'category | question | answer'.";
-    }
-  }catch(e){
-    deckInfoEl.textContent = "Failed to load sheet: " + e;
-  }
-}
-
-// Wire events
-document.getElementById('btnPrev').onclick = ()=> quizActive ? null : prev();
-document.getElementById('btnNext').onclick = ()=> quizActive ? null : next();
-document.getElementById('btnFlip').onclick = ()=> quizActive ? null : flip();
-document.getElementById('btnRandom').onclick = ()=> quizActive ? null : random();
-document.getElementById('btnQuiz').onclick = ()=> startQuiz();
+// Export
 document.getElementById('btnExport').onclick = ()=>{ 
   const blob = new Blob([JSON.stringify(allCards, null, 2)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href=url; a.download='neara_flashcards.json'; a.click(); URL.revokeObjectURL(url);
 };
 
+// Navigation
+document.getElementById('btnPrev').onclick = ()=> quizActive ? null : prev();
+document.getElementById('btnNext').onclick = ()=> quizActive ? null : next();
+document.getElementById('btnFlip').onclick = ()=> quizActive ? null : flip();
+document.getElementById('btnRandom').onclick = ()=> quizActive ? null : random();
+document.getElementById('btnQuiz').onclick = ()=> startQuiz();
 cardEl.addEventListener('click', ()=>{ if(!quizActive) flip(); });
 window.addEventListener('keydown', (e)=>{ 
   if(e.key===' '){ e.preventDefault(); if(!quizActive) flip(); }
@@ -281,9 +212,34 @@ window.addEventListener('keydown', (e)=>{
   else if(e.key.toLowerCase()==='r'){ if(!quizActive) random(); }
 });
 
-// Init
-applyFilter();
-loadFromSheet();
+// Load from Google Sheet (GViz JSON)
+(async function loadFromSheet(){
+  try{
+    const res = await fetch(SHEET_URL);
+    const text = await res.text();
+    const jsonText = text.replace(/^.*setResponse\(/,'').replace(/\);\s*$/,'');
+    const data = JSON.parse(jsonText);
+    const rows = (data.table && data.table.rows) ? data.table.rows : [];
+    const cols = (data.table && data.table.cols) ? data.table.cols.map(c => (c.label||'').toLowerCase()) : [];
+    const ci = cols.indexOf('category');
+    const qi = cols.indexOf('question');
+    const ai = cols.indexOf('answer');
+    allCards = [];
+    rows.forEach(r => {
+      const get = (i)=> (r.c[i] && r.c[i].v) ? String(r.c[i].v) : '';
+      const cat = get(ci).trim();
+      const q = get(qi).trim();
+      const a = get(ai).trim();
+      if(cat && q && a) allCards.push({category:cat, q:q, a:a});
+    });
+    currentCategory = "All";
+    applyFilter();
+  }catch(e){
+    deckInfoEl.textContent = "Failed to load sheet. Check sharing permissions.";
+    allCards = [];
+    applyFilter();
+  }
+})();
 </script>
 </body>
 </html>
